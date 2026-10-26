@@ -1,0 +1,942 @@
+{
+  "id": "MigrEjecucion002",
+  "name": "Migración UI a UI · 2 · Exploración, plan y ejecución",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 2 · Exploración, plan y ejecución\n1. **Explorar:** el ejecutor Playwright (Chromium, Firefox o WebKit, según elijas) recorre origen y destino. Toda escritura queda bloqueada a nivel de red.\n2. **Planear:** Claude propone entidades, mapeo y recetas solo con lo observado.\n3. **Aprobar:** ves el plan y decides.\n4. **Ejecutar:** cada registro corre su receta; un guardado cuenta solo si la API responde 2xx. Si un paso falla, Claude lo repara una vez.\n\n**Modelos:** *Modelo · planificador* y *Modelo · reparador* usan Claude Opus 5.5 por defecto; cada uno se puede cambiar por cualquier modelo de chat de n8n. El plan es la tarea más exigente.\n**Antes de usarlo:** asigna la credencial del proveedor en cada nodo de modelo.",
+        "width": 680,
+        "height": 340
+      },
+      "name": "Nota edfe",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "eccf5852-403f-457d-96bd-35ac7e19ffa0"
+    },
+    {
+      "parameters": {
+        "formTitle": "Iniciar migración UI a UI",
+        "formDescription": "Pega la configuración que te entregó el asistente. El origen se lee siempre en solo lectura. En modo simulación tampoco se escribe en el destino.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Configuración (JSON del asistente)",
+              "fieldType": "textarea",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Sesión del origen (opcional)",
+              "fieldType": "textarea",
+              "placeholder": "{\"cookies\":[{\"name\":\"...\",\"value\":\"...\"}],\"almacenamiento\":{\"clave\":\"valor\"}}"
+            },
+            {
+              "fieldLabel": "Sesión del destino (opcional)",
+              "fieldType": "textarea",
+              "placeholder": "{\"cookies\":[{\"name\":\"...\",\"value\":\"...\"}]}"
+            },
+            {
+              "fieldLabel": "Navegador",
+              "fieldType": "dropdown",
+              "requiredField": true,
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Según la configuración"
+                  },
+                  {
+                    "option": "Chromium (Chrome, Edge, Brave)"
+                  },
+                  {
+                    "option": "Firefox"
+                  },
+                  {
+                    "option": "WebKit (Safari)"
+                  },
+                  {
+                    "option": "Chromium remoto (browserless)"
+                  }
+                ]
+              }
+            },
+            {
+              "fieldLabel": "Modo",
+              "fieldType": "dropdown",
+              "requiredField": true,
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Simulación (no escribe)"
+                  },
+                  {
+                    "option": "Real (escribe en el destino)"
+                  }
+                ]
+              }
+            },
+            {
+              "fieldLabel": "Registros piloto (0 = todos)",
+              "fieldType": "number",
+              "placeholder": "2"
+            }
+          ]
+        }
+      },
+      "name": "Iniciar migración",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.3,
+      "position": [
+        260,
+        300
+      ],
+      "id": "3f543fd6-be8a-4806-8118-f0470e465650",
+      "webhookId": "9d4e7b21-5c3a-4f8e-b1a6-2c7f0e9d3b42"
+    },
+    {
+      "parameters": {
+        "jsCode": "  const f = $input.first().json;\n  const leerJson = (texto, nombre, porDefecto) => {\n    if (!String(texto ?? '').trim()) return porDefecto;\n    try { return JSON.parse(texto); } catch { throw new Error(`El campo «${nombre}» no es un JSON válido.`); }\n  };\n  const configuracion = leerJson(f['Configuración (JSON del asistente)'], 'Configuración', null);\n  if (!configuracion?.origen?.url || !configuracion?.destino?.url) throw new Error('La configuración debe traer origen.url y destino.url.');\n  const sesionOrigen = leerJson(f['Sesión del origen (opcional)'], 'Sesión del origen', {});\n  const sesionDestino = leerJson(f['Sesión del destino (opcional)'], 'Sesión del destino', {});\n  const simulacion = f['Modo'] !== 'Real (escribe en el destino)';\n  const piloto = Math.max(0, Number(f['Registros piloto (0 = todos)']) || 0);\n  const opciones = { 'Chromium (Chrome, Edge, Brave)': 'chromium', Firefox: 'firefox', 'WebKit (Safari)': 'webkit', 'Chromium remoto (browserless)': 'chromium_remoto' };\n  const elegido = opciones[f['Navegador']] ?? configuracion.navegador;\n  const navegador = ['chromium', 'firefox', 'webkit', 'chromium_remoto'].includes(elegido) ? elegido : 'chromium';\n  const accion = 'explorar';\n  const comun = (s) => ({ cookies: s.cookies ?? [], almacenamiento: s.almacenamiento ?? {} });\n  return [\n    { json: { lado: 'origen', configuracion, sesionOrigen, sesionDestino, simulacion, piloto, navegador, accion,\n      contexto: { url: configuracion.origen.url, rutas: configuracion.origen.rutas_relevantes ?? [], maxPaginas: 12, abrirFormularios: false, ...comun(sesionOrigen) } } },\n    { json: { lado: 'destino', configuracion, sesionOrigen, sesionDestino, simulacion, piloto, navegador, accion,\n      contexto: { url: configuracion.destino.url, rutas: configuracion.destino.rutas_relevantes ?? [], maxPaginas: 10, abrirFormularios: true, ...comun(sesionDestino) } } },\n  ];\n"
+      },
+      "name": "Leer formulario",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ],
+      "id": "666f300e-a5b4-4f4a-a0f7-b2e7b12d4eb1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'http://ejecutor:3100/' + $json.accion }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ navegador: $json.navegador, contexto: $json.contexto }) }}",
+        "options": {
+          "timeout": 900000
+        }
+      },
+      "name": "Playwright · explorar (solo lectura)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        300
+      ],
+      "id": "f09251fe-d7c8-43f4-8fa6-813dc8eb6fbc"
+    },
+    {
+      "parameters": {
+        "jsCode": "  const exploraciones = $input.all().map((i) => i.json.data ?? i.json);\n  const entradas = $('Leer formulario').all().map((i) => i.json);\n  const recortar = (v, n) => JSON.stringify(v).slice(0, n);\n  const detalle = entradas.map((e, k) => `### ${e.lado.toUpperCase()} (${e.contexto.url})\\nPáginas: ${recortar(exploraciones[k]?.paginas ?? [], 60000)}\\nRespuestas JSON: ${recortar(exploraciones[k]?.respuestas ?? [], 60000)}`).join('\\n\\n');\n  const prompt = `Configuración acordada:\\n${JSON.stringify(entradas[0].configuracion, null, 2)}\\n\\nExploración:\\n${detalle}`;\n  return [{ json: { prompt } }];\n"
+      },
+      "name": "Preparar plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        300
+      ],
+      "id": "c5b3ccb0-742f-42bf-978e-18cd61997d5c"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "Eres el planificador de una migración UI a UI. Recibes la configuración acordada con el usuario y lo que un navegador vio al explorar el origen (en solo lectura) y el destino (sin escribir): páginas, campos de formularios, botones y las respuestas JSON que reciben las pantallas.\n\nProduce el plan de migración:\n- entidades: en orden de carga (padres primero). Para leer el origen usa los endpoints GET que aparecen en las respuestas capturadas, no el HTML. Indica la ruta al arreglo dentro del JSON y los campos id y nombre. Para detectar duplicados en el destino usa la clave de identidad de la configuración.\n- mapeo: campo a campo. Los valores de catálogo (estados, categorías) se traducen con transformación «tabla».\n- recetas: los pasos exactos para crear UN registro en el destino con los campos y botones observados. Prefiere selectores por etiqueta o placeholder (estables) antes que CSS. Cada «guardar» debe indicar el método HTTP y un patrón de URL de la API que confirma el guardado. Los valores se referencian con el nombre de «campo_destino»; para el id del padre en el destino usa el campo «_id_padre_destino».\n- Usa solo lo observado; si algo no se vio, decláralo en preguntas_abiertas en vez de inventarlo.\n- catalogos_faltantes, riesgos y preguntas_abiertas: concretos y accionables.\nResponde en español."
+            }
+          ]
+        }
+      },
+      "name": "IA · plan de migración",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        1300,
+        300
+      ],
+      "id": "8261d328-07ae-4f2f-9291-b395936c4d38"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "claude-opus-5-5"
+        },
+        "options": {
+          "maxTokensToSample": 32000,
+          "thinkingMode": "adaptive",
+          "effort": "high"
+        }
+      },
+      "name": "Modelo · planificador",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.6,
+      "position": [
+        1220,
+        520
+      ],
+      "id": "3b72b0b8-6539-4958-866a-a36ebbe012b2"
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\n    \"resumen\",\n    \"entidades\",\n    \"mapeo\",\n    \"recetas\",\n    \"catalogos_faltantes\",\n    \"riesgos\",\n    \"preguntas_abiertas\"\n  ],\n  \"properties\": {\n    \"resumen\": {\n      \"type\": \"string\"\n    },\n    \"entidades\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"additionalProperties\": false,\n        \"required\": [\n          \"nombre\",\n          \"orden\",\n          \"padre\",\n          \"campo_padre_origen\",\n          \"endpoint_listado\",\n          \"ruta_lista\",\n          \"campo_id\",\n          \"campo_nombre\",\n          \"filtros\",\n          \"endpoint_destino\",\n          \"ruta_lista_destino\",\n          \"campo_clave_destino\"\n        ],\n        \"properties\": {\n          \"nombre\": {\n            \"type\": \"string\"\n          },\n          \"orden\": {\n            \"type\": \"integer\"\n          },\n          \"padre\": {\n            \"type\": \"string\",\n            \"description\": \"Entidad padre, o vacío\"\n          },\n          \"campo_padre_origen\": {\n            \"type\": \"string\",\n            \"description\": \"Campo del registro que apunta al id del padre en el origen, o vacío\"\n          },\n          \"endpoint_listado\": {\n            \"type\": \"string\",\n            \"description\": \"URL completa del GET que lista los registros en el origen; puede usar {{id_padre_origen}}\"\n          },\n          \"ruta_lista\": {\n            \"type\": \"string\",\n            \"description\": \"Ruta dentro del JSON hasta el arreglo (ej.: data.items), vacío si es la raíz\"\n          },\n          \"campo_id\": {\n            \"type\": \"string\"\n          },\n          \"campo_nombre\": {\n            \"type\": \"string\"\n          },\n          \"filtros\": {\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"additionalProperties\": false,\n              \"required\": [\n                \"campo\",\n                \"operador\",\n                \"valor\"\n              ],\n              \"properties\": {\n                \"campo\": {\n                  \"type\": \"string\"\n                },\n                \"operador\": {\n                  \"type\": \"string\",\n                  \"enum\": [\n                    \"igual\",\n                    \"distinto\",\n                    \"contiene\",\n                    \"no_contiene\"\n                  ]\n                },\n                \"valor\": {\n                  \"type\": \"string\"\n                }\n              }\n            }\n          },\n          \"endpoint_destino\": {\n            \"type\": \"string\",\n            \"description\": \"GET del destino que lista los registros ya existentes, o vacío\"\n          },\n          \"ruta_lista_destino\": {\n            \"type\": \"string\"\n          },\n          \"campo_clave_destino\": {\n            \"type\": \"string\",\n            \"description\": \"Campo del destino que se compara con la clave de identidad\"\n          }\n        }\n      }\n    },\n    \"mapeo\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"additionalProperties\": false,\n        \"required\": [\n          \"entidad\",\n          \"campo_destino\",\n          \"origen\",\n          \"transformacion\",\n          \"valor_fijo\",\n          \"tabla\"\n        ],\n        \"properties\": {\n          \"entidad\": {\n            \"type\": \"string\"\n          },\n          \"campo_destino\": {\n            \"type\": \"string\",\n            \"description\": \"Nombre corto que usan las recetas en {{campo}}\"\n          },\n          \"origen\": {\n            \"type\": \"string\",\n            \"description\": \"Ruta en el registro de origen (ej.: fecha_inicio, cliente.nombre)\"\n          },\n          \"transformacion\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"ninguna\",\n              \"fecha_iso\",\n              \"mayusculas\",\n              \"minusculas\",\n              \"numero\",\n              \"fijo\",\n              \"tabla\"\n            ]\n          },\n          \"valor_fijo\": {\n            \"type\": \"string\"\n          },\n          \"tabla\": {\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"additionalProperties\": false,\n              \"required\": [\n                \"de\",\n                \"a\"\n              ],\n              \"properties\": {\n                \"de\": {\n                  \"type\": \"string\"\n                },\n                \"a\": {\n                  \"type\": \"string\"\n                }\n              }\n            }\n          }\n        }\n      }\n    },\n    \"recetas\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"additionalProperties\": false,\n        \"required\": [\n          \"entidad\",\n          \"pasos\"\n        ],\n        \"properties\": {\n          \"entidad\": {\n            \"type\": \"string\"\n          },\n          \"pasos\": {\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"additionalProperties\": false,\n              \"required\": [\n                \"accion\",\n                \"ruta\",\n                \"selector\",\n                \"texto\",\n                \"etiqueta\",\n                \"placeholder\",\n                \"campo\",\n                \"metodo\",\n                \"url_patron\",\n                \"ms\"\n              ],\n              \"properties\": {\n                \"accion\": {\n                  \"type\": \"string\",\n                  \"enum\": [\n                    \"ir\",\n                    \"clic\",\n                    \"llenar\",\n                    \"seleccionar\",\n                    \"guardar\",\n                    \"esperar\"\n                  ]\n                },\n                \"ruta\": {\n                  \"type\": \"string\"\n                },\n                \"selector\": {\n                  \"type\": \"string\"\n                },\n                \"texto\": {\n                  \"type\": \"string\"\n                },\n                \"etiqueta\": {\n                  \"type\": \"string\"\n                },\n                \"placeholder\": {\n                  \"type\": \"string\"\n                },\n                \"campo\": {\n                  \"type\": \"string\"\n                },\n                \"metodo\": {\n                  \"type\": \"string\"\n                },\n                \"url_patron\": {\n                  \"type\": \"string\"\n                },\n                \"ms\": {\n                  \"type\": \"integer\"\n                }\n              }\n            }\n          }\n        }\n      }\n    },\n    \"catalogos_faltantes\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"riesgos\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"preguntas_abiertas\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    }\n  }\n}",
+        "autoFix": true
+      },
+      "name": "Formato · planificador",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1420,
+        520
+      ],
+      "id": "ecf6c06d-11f5-49e4-a890-9c6fa4e82f45"
+    },
+    {
+      "parameters": {
+        "jsCode": "  const plan = $input.first().json.output;\n  if (!plan?.entidades) throw new Error('El modelo no devolvió un plan válido.');\n  const esc = (s) => String(s ?? '').replace(/[&<>\"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[c]));\n  const lista = (titulo, items) => (items?.length ? `<h3>${titulo}</h3><ul>${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>` : '');\n  const filas = (plan.mapeo ?? []).map((m) => `<tr><td>${esc(m.entidad)}</td><td>${esc(m.origen)}</td><td>→</td><td>${esc(m.campo_destino)}</td><td>${esc(m.transformacion)}</td></tr>`).join('');\n  const html = `<p>${esc(plan.resumen)}</p>\n<h3>Entidades (en orden)</h3><ol>${(plan.entidades ?? []).sort((a, b) => a.orden - b.orden).map((e) => `<li><b>${esc(e.nombre)}</b>${e.padre ? ` (hija de ${esc(e.padre)})` : ''} · ${esc(e.endpoint_listado)}</li>`).join('')}</ol>\n<h3>Mapeo</h3><table border=\"1\" cellpadding=\"4\" style=\"border-collapse:collapse;font-size:12px\"><tr><th>Entidad</th><th>Origen</th><th></th><th>Destino</th><th>Transformación</th></tr>${filas}</table>\n<h3>Recetas</h3><ul>${(plan.recetas ?? []).map((rc) => `<li>${esc(rc.entidad)}: ${rc.pasos.length} pasos</li>`).join('')}</ul>\n${lista('Catálogos que faltan en el destino', plan.catalogos_faltantes)}${lista('Riesgos', plan.riesgos)}${lista('Preguntas abiertas', plan.preguntas_abiertas)}`;\n  return [{ json: { plan, html } }];\n"
+      },
+      "name": "Mostrar plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        300
+      ],
+      "id": "87a334c2-6b3a-468c-9a31-ae0db419712f"
+    },
+    {
+      "parameters": {
+        "operation": "page",
+        "formFields": {
+          "values": [
+            {
+              "fieldType": "html",
+              "html": "={{ $json.html }}"
+            },
+            {
+              "fieldLabel": "Decisión",
+              "fieldType": "dropdown",
+              "requiredField": true,
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Aprobar y ejecutar"
+                  },
+                  {
+                    "option": "Cancelar"
+                  }
+                ]
+              }
+            },
+            {
+              "fieldLabel": "Observaciones",
+              "fieldType": "textarea"
+            }
+          ]
+        },
+        "options": {
+          "formTitle": "Plan propuesto",
+          "buttonLabel": "Enviar"
+        }
+      },
+      "name": "Aprobar plan",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.3,
+      "position": [
+        1820,
+        300
+      ],
+      "id": "54ec2c1c-d86d-4340-ab0d-d13fbda265c8",
+      "webhookId": "3672ea56-9872-4d78-baba-d01eb763ed77"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "0381988d-8254-43a2-b248-8c274e489d79",
+              "leftValue": "={{ $json[\"Decisión\"] }}",
+              "rightValue": "Aprobar y ejecutar",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "¿Aprobado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        300
+      ],
+      "id": "16b81eae-9db1-4be4-9170-003b5b01a4a0"
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "text",
+        "completionTitle": "Migración cancelada",
+        "completionMessage": "No se escribió nada. Puedes ajustar la configuración y volver a empezar."
+      },
+      "name": "Cancelado",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.3,
+      "position": [
+        6240,
+        300
+      ],
+      "id": "e82a1da2-af64-4563-b0cb-1648b18de057",
+      "webhookId": "1c5504be-b989-4b44-b530-4d4af64b4fc0"
+    },
+    {
+      "parameters": {
+        "jsCode": "  const { plan } = $('Mostrar plan').first().json;\n  const base = $('Leer formulario').first().json;\n  const raices = plan.entidades.filter((e) => !e.padre);\n  return [{ json: {\n    accion: 'leer-registros',\n    navegador: base.navegador,\n    contexto: { url: base.configuracion.origen.url, ...(base.sesionOrigen ?? {}), endpoints: raices.map((e) => ({ entidad: e.nombre, url: e.endpoint_listado })) },\n  } }];\n"
+      },
+      "name": "Preparar lectura de registros",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        300
+      ],
+      "id": "1d8fabda-395b-4aa7-bcff-f5283326d482"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'http://ejecutor:3100/' + $json.accion }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ navegador: $json.navegador, contexto: $json.contexto }) }}",
+        "options": {
+          "timeout": 900000
+        }
+      },
+      "name": "Playwright · leer registros (solo lectura)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2600,
+        300
+      ],
+      "id": "24c35490-9cc5-46b9-996d-71b941fcacf3"
+    },
+    {
+      "parameters": {
+        "jsCode": "  const { plan } = $('Mostrar plan').first().json;\n  const base = $('Leer formulario').first().json;\n  const resultados = $input.first().json.data?.resultados ?? [];\n  const leer = (obj, ruta) => (ruta ? String(ruta).split('.').reduce((o, k) => o?.[k], obj) : obj);\n  const cumple = (reg, f) => {\n    const v = String(leer(reg, f.campo) ?? '').toLowerCase(); const w = String(f.valor ?? '').toLowerCase();\n    return { igual: v === w, distinto: v !== w, contiene: v.includes(w), no_contiene: !v.includes(w) }[f.operador] ?? true;\n  };\n  const trabajos = [];\n  for (const ent of plan.entidades.filter((e) => !e.padre)) {\n    const r = resultados.find((x) => x.entidad === ent.nombre);\n    let registros = leer(r?.json, ent.ruta_lista) ?? [];\n    if (!Array.isArray(registros)) registros = [];\n    registros = registros.filter((reg) => (ent.filtros ?? []).every((f) => cumple(reg, f)));\n    if (base.piloto > 0) registros = registros.slice(0, base.piloto);\n    for (const reg of registros) trabajos.push({ json: { entidad: ent.nombre, idOrigen: String(leer(reg, ent.campo_id) ?? ''), nombre: String(leer(reg, ent.campo_nombre) ?? ''), registro: reg, intento: 0 } });\n  }\n  // Estado de esta ejecución: ids creados y resultados por registro.\n  const estado = $getWorkflowStaticData('global');\n  estado.ejecuciones ??= {};\n  estado.ejecuciones[$execution.id] = { idsDestino: {}, resultados: [] };\n  if (!trabajos.length) return [{ json: { vacio: true, motivo: resultados.map((x) => `${x.entidad}: ${x.estado} ${x.error}`).join(' | ') } }];\n  return trabajos;\n"
+      },
+      "name": "Preparar trabajos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        300
+      ],
+      "id": "3e2be1ae-ed81-42dc-b825-b86039461387"
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "name": "Por cada registro",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        3120,
+        300
+      ],
+      "id": "4957fda0-4607-478e-9339-01ddcf895bad"
+    },
+    {
+      "parameters": {
+        "jsCode": "  const t = $input.first().json;\n  const { plan } = $('Mostrar plan').first().json;\n  const base = $('Leer formulario').first().json;\n  const estado = $getWorkflowStaticData('global').ejecuciones[$execution.id];\n  // Sin registros: se manda una receta vacía para llegar al resumen con el motivo.\n  if (t.vacio) {\n    return [{ json: { ...t, ok: false, accion: 'ejecutar-receta', navegador: base.navegador, contexto: { url: base.configuracion.destino.url, pasos: [], valores: {}, simulacion: true } } }];\n  }\n  const leer = (obj, ruta) => (ruta ? String(ruta).split('.').reduce((o, k) => o?.[k], obj) : obj);\n  const valores = {};\n  for (const m of plan.mapeo.filter((x) => x.entidad === t.entidad)) {\n    let v = m.transformacion === 'fijo' ? m.valor_fijo : leer(t.registro, m.origen);\n    if (v == null) v = '';\n    if (m.transformacion === 'fecha_iso' && v) v = String(v).slice(0, 10);\n    if (m.transformacion === 'mayusculas') v = String(v).toUpperCase();\n    if (m.transformacion === 'minusculas') v = String(v).toLowerCase();\n    if (m.transformacion === 'numero') v = String(Number(v) || 0);\n    if (m.transformacion === 'tabla') v = (m.tabla.find((f) => f.de.toLowerCase() === String(v).toLowerCase())?.a) ?? v;\n    valores[m.campo_destino] = String(v);\n  }\n  const ent = plan.entidades.find((e) => e.nombre === t.entidad);\n  if (ent?.padre) valores._id_padre_destino = estado.idsDestino[`${ent.padre}:${leer(t.registro, ent.campo_padre_origen)}`] ?? '';\n  const receta = t.recetaReparada ?? plan.recetas.find((r) => r.entidad === t.entidad)?.pasos ?? [];\n  return [{ json: { ...t, valores, receta, accion: 'ejecutar-receta', navegador: base.navegador,\n    contexto: { url: base.configuracion.destino.url, ...(base.sesionDestino ?? {}), pasos: receta, valores, simulacion: base.simulacion } } }];\n"
+      },
+      "name": "Transformar registro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3380,
+        300
+      ],
+      "id": "a2946c76-f09d-4ad8-9076-3ff5ab035876"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'http://ejecutor:3100/' + $json.accion }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ navegador: $json.navegador, contexto: $json.contexto }) }}",
+        "options": {
+          "timeout": 900000
+        }
+      },
+      "name": "Playwright · ejecutar receta",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3640,
+        300
+      ],
+      "id": "829309dc-3783-42c4-892a-cfce985bcc1e"
+    },
+    {
+      "parameters": {
+        "jsCode": "  const t = $('Transformar registro').first().json;\n  const r = $input.first().json.data ?? {};\n  // Sin registros no hay nada que reparar: pasa directo al registro con el motivo.\n  return [{ json: { ...t, resultado: r, ok: Boolean(r.ok), intento: t.vacio ? 1 : t.intento } }];\n"
+      },
+      "name": "Evaluar resultado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3900,
+        300
+      ],
+      "id": "c8cd1f70-6211-48f9-aab4-396ecc4ba526"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "d594e52f-d5b5-479e-b71a-537155af0445",
+              "leftValue": "={{ $json.ok || $json.intento >= 1 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "¿Guardado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4160,
+        300
+      ],
+      "id": "d18a5ac4-56ad-42bf-91c0-2b4a3cb432d1"
+    },
+    {
+      "parameters": {
+        "jsCode": "  const t = $input.first().json;\n  const paso = t.receta[t.resultado.paso_fallido];\n  const prompt = `Paso que falló: ${JSON.stringify(paso)}\\nError: ${t.resultado.error}\\nPantalla: ${t.resultado.ruta}\\nÁrbol de accesibilidad: ${t.resultado.arbol}`;\n  return [{ json: { ...t, prompt } }];\n"
+      },
+      "name": "Pedir reparación",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4420,
+        300
+      ],
+      "id": "ad0eaf9e-408d-4de3-9733-7b8cfc82c8af"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "Reparas un paso de una receta de navegador que falló en una migración UI a UI. Con el árbol de accesibilidad de la pantalla, propone el mismo paso con un selector, texto, etiqueta o placeholder que sí exista. No cambies la intención del paso ni inventes campos. Si no se puede reparar, reparable=false. Responde en español."
+            }
+          ]
+        }
+      },
+      "name": "IA · reparar paso",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        4680,
+        300
+      ],
+      "id": "d3a2b5bc-841d-4943-9a13-793361b23b2c"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "claude-opus-5-5"
+        },
+        "options": {
+          "maxTokensToSample": 8000,
+          "thinkingMode": "adaptive",
+          "effort": "medium"
+        }
+      },
+      "name": "Modelo · reparador",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.6,
+      "position": [
+        4600,
+        520
+      ],
+      "id": "5319d5d6-d035-4d7f-946b-fe8fe2918b72"
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\n    \"diagnostico\",\n    \"reparable\",\n    \"paso\"\n  ],\n  \"properties\": {\n    \"diagnostico\": {\n      \"type\": \"string\"\n    },\n    \"reparable\": {\n      \"type\": \"boolean\"\n    },\n    \"paso\": {\n      \"type\": \"object\",\n      \"additionalProperties\": false,\n      \"required\": [\n        \"accion\",\n        \"ruta\",\n        \"selector\",\n        \"texto\",\n        \"etiqueta\",\n        \"placeholder\",\n        \"campo\",\n        \"metodo\",\n        \"url_patron\",\n        \"ms\"\n      ],\n      \"properties\": {\n        \"accion\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"ir\",\n            \"clic\",\n            \"llenar\",\n            \"seleccionar\",\n            \"guardar\",\n            \"esperar\"\n          ]\n        },\n        \"ruta\": {\n          \"type\": \"string\"\n        },\n        \"selector\": {\n          \"type\": \"string\"\n        },\n        \"texto\": {\n          \"type\": \"string\"\n        },\n        \"etiqueta\": {\n          \"type\": \"string\"\n        },\n        \"placeholder\": {\n          \"type\": \"string\"\n        },\n        \"campo\": {\n          \"type\": \"string\"\n        },\n        \"metodo\": {\n          \"type\": \"string\"\n        },\n        \"url_patron\": {\n          \"type\": \"string\"\n        },\n        \"ms\": {\n          \"type\": \"integer\"\n        }\n      }\n    }\n  }\n}",
+        "autoFix": true
+      },
+      "name": "Formato · reparador",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        4800,
+        520
+      ],
+      "id": "9f0a21d0-2f28-4a0e-be54-514bf522108d"
+    },
+    {
+      "parameters": {
+        "jsCode": "  const t = $('Pedir reparación').first().json;\n  const rep = $input.first().json.output ?? null;\n  if (!rep?.reparable) return [{ json: { ...t, ok: false, diagnostico: rep?.diagnostico ?? 'Sin reparación posible', intento: t.intento + 1 } }];\n  const recetaReparada = t.receta.map((p, i) => (i === t.resultado.paso_fallido ? rep.paso : p));\n  return [{ json: { ...t, recetaReparada, diagnostico: rep.diagnostico, intento: t.intento + 1, reintentar: true } }];\n"
+      },
+      "name": "Aplicar reparación",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4940,
+        300
+      ],
+      "id": "3b5e4202-b17a-467b-ad17-ec34c92a694a"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "025e28b9-afa2-4cf9-b105-08dec0ee3970",
+              "leftValue": "={{ Boolean($json.reintentar) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "¿Reintentar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        5200,
+        300
+      ],
+      "id": "5f902162-23a2-4f6b-bdab-5fd4d285b0e8"
+    },
+    {
+      "parameters": {
+        "jsCode": "  const t = $input.first().json;\n  const estado = $getWorkflowStaticData('global').ejecuciones[$execution.id];\n  if (t.vacio) {\n    estado.resultados.push({ entidad: '—', idOrigen: '', nombre: '', ok: false, idDestino: '', reparado: false, detalle: `No se encontraron registros en el origen. ${t.motivo ?? ''}` });\n    return [{ json: { listo: true } }];\n  }\n  // El id creado se toma de la primera respuesta de guardado que traiga un campo id.\n  let idDestino = '';\n  for (const g of t.resultado?.guardados ?? []) {\n    try { const j = JSON.parse(g.cuerpo); idDestino = String(j.id ?? j.data?.id ?? ''); if (idDestino) break; } catch { /* sin JSON */ }\n  }\n  if (t.ok && idDestino) estado.idsDestino[`${t.entidad}:${t.idOrigen}`] = idDestino;\n  estado.resultados.push({ entidad: t.entidad, idOrigen: t.idOrigen, nombre: t.nombre, ok: t.ok, idDestino, reparado: Boolean(t.recetaReparada), detalle: t.ok ? '' : (t.resultado?.error ?? t.diagnostico ?? '') });\n  return [{ json: { listo: true } }];\n"
+      },
+      "name": "Registrar resultado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5460,
+        300
+      ],
+      "id": "fe0c5f44-9dde-47d3-bc31-2f0a6d03d0d7"
+    },
+    {
+      "parameters": {
+        "jsCode": "  const base = $('Leer formulario').first().json;\n  const estado = $getWorkflowStaticData('global').ejecuciones?.[$execution.id] ?? { resultados: [] };\n  const rs = estado.resultados;\n  const ok = rs.filter((r) => r.ok).length;\n  const esc = (s) => String(s ?? '').replace(/[&<>\"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[c]));\n  const filas = rs.map((r) => `<tr><td>${esc(r.entidad)}</td><td>${esc(r.idOrigen)}</td><td>${esc(r.nombre)}</td><td>${r.ok ? '✔' : '✘'}${r.reparado ? ' (reparado)' : ''}</td><td>${esc(r.idDestino)}</td><td>${esc(r.detalle)}</td></tr>`).join('');\n  const html = `<h2>${base.simulacion ? 'Simulación terminada (no se escribió nada)' : 'Migración terminada'}</h2>\n<p><b>${ok}</b> de <b>${rs.length}</b> registros correctos.</p>\n<table border=\"1\" cellpadding=\"4\" style=\"border-collapse:collapse;font-size:12px\"><tr><th>Entidad</th><th>Id origen</th><th>Nombre</th><th>Resultado</th><th>Id destino</th><th>Detalle</th></tr>${filas}</table>`;\n  delete $getWorkflowStaticData('global').ejecuciones?.[$execution.id];\n  return [{ json: { html, total: rs.length, correctos: ok } }];\n"
+      },
+      "name": "Resumen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5720,
+        300
+      ],
+      "id": "7107ca3e-2ef5-4c4c-a88a-7d701a5b3496"
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "showText",
+        "responseText": "={{ $json.html }}"
+      },
+      "name": "Resultado",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.3,
+      "position": [
+        5980,
+        300
+      ],
+      "id": "62c22d8a-e726-4889-a3dc-c412cd2793f7",
+      "webhookId": "7af188cc-9b7f-4366-9eb0-d94c37c990b4"
+    }
+  ],
+  "connections": {
+    "Iniciar migración": {
+      "main": [
+        [
+          {
+            "node": "Leer formulario",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer formulario": {
+      "main": [
+        [
+          {
+            "node": "Playwright · explorar (solo lectura)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Playwright · explorar (solo lectura)": {
+      "main": [
+        [
+          {
+            "node": "Preparar plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar plan": {
+      "main": [
+        [
+          {
+            "node": "IA · plan de migración",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IA · plan de migración": {
+      "main": [
+        [
+          {
+            "node": "Mostrar plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mostrar plan": {
+      "main": [
+        [
+          {
+            "node": "Aprobar plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aprobar plan": {
+      "main": [
+        [
+          {
+            "node": "¿Aprobado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Aprobado?": {
+      "main": [
+        [
+          {
+            "node": "Preparar lectura de registros",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cancelado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar lectura de registros": {
+      "main": [
+        [
+          {
+            "node": "Playwright · leer registros (solo lectura)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Playwright · leer registros (solo lectura)": {
+      "main": [
+        [
+          {
+            "node": "Preparar trabajos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar trabajos": {
+      "main": [
+        [
+          {
+            "node": "Por cada registro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Por cada registro": {
+      "main": [
+        [
+          {
+            "node": "Resumen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transformar registro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transformar registro": {
+      "main": [
+        [
+          {
+            "node": "Playwright · ejecutar receta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Playwright · ejecutar receta": {
+      "main": [
+        [
+          {
+            "node": "Evaluar resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluar resultado": {
+      "main": [
+        [
+          {
+            "node": "¿Guardado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Guardado?": {
+      "main": [
+        [
+          {
+            "node": "Registrar resultado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pedir reparación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pedir reparación": {
+      "main": [
+        [
+          {
+            "node": "IA · reparar paso",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IA · reparar paso": {
+      "main": [
+        [
+          {
+            "node": "Aplicar reparación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aplicar reparación": {
+      "main": [
+        [
+          {
+            "node": "¿Reintentar?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Reintentar?": {
+      "main": [
+        [
+          {
+            "node": "Transformar registro",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Registrar resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar resultado": {
+      "main": [
+        [
+          {
+            "node": "Por cada registro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resumen": {
+      "main": [
+        [
+          {
+            "node": "Resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modelo · planificador": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "IA · plan de migración",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Formato · planificador",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formato · planificador": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "IA · plan de migración",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modelo · reparador": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "IA · reparar paso",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Formato · reparador",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formato · reparador": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "IA · reparar paso",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

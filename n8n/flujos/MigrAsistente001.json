@@ -1,0 +1,195 @@
+{
+  "id": "MigrAsistente001",
+  "name": "Migración UI a UI · 1 · Asistente de configuración",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 1 · Asistente de configuración\nEl usuario cuenta su migración y el asistente le dice **qué falta** para configurar el entorno (accesos, ambiente de pruebas, OTP, entidades, identidad, catálogos, piloto).\n\nGuarda el avance por sesión de chat. Cuando todo está completo entrega la configuración en JSON para el flujo 2.\n\n**Modelo:** por defecto Claude Opus 5.5 (nodo *Modelo · configurador*). Puedes reemplazarlo por cualquier modelo de chat de n8n: OpenAI, Gemini, Azure, Mistral, Ollama…\n**Antes de usarlo:** asigna la credencial del proveedor en el nodo del modelo.",
+        "width": 600,
+        "height": 280
+      },
+      "name": "Nota 142f",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "53e89b20-95e1-4746-924f-c4aa4fdea381"
+    },
+    {
+      "parameters": {
+        "public": true,
+        "mode": "hostedChat",
+        "initialMessages": "Hola. Soy el asistente de migraciones entre aplicativos.\nCuéntame qué quieres migrar: de qué aplicativo a cuál, qué datos y las reglas que tengas. Te diré qué necesito para configurar el entorno.",
+        "options": {
+          "title": "Asistente de migración",
+          "subtitle": "UI a UI, con piloto y aprobación",
+          "inputPlaceholder": "Describe tu migración…",
+          "responseMode": "lastNode"
+        }
+      },
+      "name": "Chat de migración",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        260,
+        300
+      ],
+      "id": "17fb6996-2cb9-4000-9abe-fa278c938488",
+      "webhookId": "6f1c2a40-3b7e-4c1d-9a55-0e4b8d2f7a11"
+    },
+    {
+      "parameters": {
+        "jsCode": "  const datos = $getWorkflowStaticData('global');\n  datos.sesiones ??= {};\n  const { sessionId, chatInput } = $input.first().json;\n  const sesion = datos.sesiones[sessionId] ?? { historial: [], configuracion: null, checklist: [], creada: new Date().toISOString() };\n  sesion.historial.push({ rol: 'usuario', texto: String(chatInput ?? '') });\n  datos.sesiones[sessionId] = sesion;\n  const conversacion = sesion.historial.slice(-30).map((m) => `${m.rol === 'usuario' ? 'USUARIO' : 'ASISTENTE'}: ${m.texto}`).join('\\n\\n');\n  const estado = sesion.configuracion ? JSON.stringify({ configuracion: sesion.configuracion, checklist: sesion.checklist }) : 'Todavía no hay configuración guardada.';\n  const prompt = `Conversación hasta ahora:\\n${conversacion}\\n\\nEstado guardado (actualízalo con lo nuevo):\\n${estado}\\n\\nResponde al último mensaje del usuario.`;\n  return [{ json: { sessionId, prompt } }];\n"
+      },
+      "name": "Preparar conversación",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ],
+      "id": "53ed36bd-777f-4362-95e9-bc0bc1973da7"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "Eres el asistente de configuración de una plataforma que migra datos entre aplicativos web, interfaz a interfaz (UI a UI): lee las pantallas del origen y llena los formularios del destino como lo haría una persona.\n\nTu trabajo: a partir de lo que el usuario cuente, decir con precisión qué falta para configurar el entorno de la migración, y pedirlo. Te adaptas a cada caso: no hagas preguntas cuya respuesta ya diste o que no aplican.\n\nCómo trabajas:\n- Haz como máximo 3 preguntas por turno, empezando por lo que bloquea.\n- Explica en una línea por qué necesitas cada cosa.\n- Mantén el checklist completo en cada respuesta (todo lo pendiente, completo o no aplica).\n- Escribe en español, claro y sin jerga técnica innecesaria.\n\nLo que una migración UI a UI necesita (adapta, no recites):\n1. Acceso: URL de origen y destino; cómo se ingresa (usuario y clave, SSO, OTP o MFA, captcha). Si hay OTP o MFA, propone un usuario técnico de migración o que el usuario exporte su sesión (cookies) al iniciar. NUNCA pidas contraseñas ni códigos por este chat: se registran en las credenciales de n8n o se pegan en el formulario de ejecución.\n2. Ambiente: si el destino tiene ambiente de pruebas para el piloto; confirmar que el origen se usará solo en lectura.\n3. Datos: qué entidades (proyectos, clientes, tickets…), qué secciones de cada una, filtros y exclusiones, volumen aproximado.\n4. Identidad: cómo reconocer si un registro ya existe en el destino. Recomienda guardar el código del origen; advierte que el nombre puede repetirse.\n5. Catálogos: usuarios, áreas, estados y listas del destino que deben existir antes (responsables, categorías). Pregunta qué hacer si no existen: crearlos, usar uno por defecto o dejar aviso.\n6. Reglas: transformaciones (fechas, estados equivalentes), datos incompletos (por ejemplo, fechas vacías), duplicados.\n7. Operación: piloto (2 o 3 registros concretos), quién aprueba, ventana de ejecución.\n8. Navegador: pregunta con cuál se va a trabajar y explica la diferencia en una línea cada uno: Chromium (recomendado; el mismo motor de Chrome, Edge y Brave), Firefox, WebKit (el motor de Safari, útil si el aplicativo solo se usa en Mac o iPhone) o Chromium remoto (el del servicio browserless, útil para repartir la carga). Si el usuario no tiene preferencia, propone Chromium.\n9. Si el destino es un sistema propio con API, menciona que cargar por la API sería más rápido y estable, sin insistir.\n\nPasa a fase «listo_para_explorar» solo cuando estén completos acceso, ambiente, navegador, entidades, identidad y piloto. En ese momento resume la configuración y di que el siguiente paso es el formulario «Iniciar migración»."
+            }
+          ]
+        }
+      },
+      "name": "IA · configurador",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        780,
+        300
+      ],
+      "id": "6d6dc931-f18c-4c39-becc-db2223f2acad"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "claude-opus-5-5"
+        },
+        "options": {
+          "maxTokensToSample": 16000,
+          "thinkingMode": "adaptive",
+          "effort": "medium"
+        }
+      },
+      "name": "Modelo · configurador",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.6,
+      "position": [
+        700,
+        520
+      ],
+      "id": "917624a0-0eae-4080-8273-5ed692397957"
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\n    \"respuesta\",\n    \"fase\",\n    \"checklist\",\n    \"configuracion\"\n  ],\n  \"properties\": {\n    \"respuesta\": {\n      \"type\": \"string\",\n      \"description\": \"Mensaje para el usuario, en español, con las preguntas de este turno\"\n    },\n    \"fase\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"recopilando\",\n        \"listo_para_explorar\"\n      ]\n    },\n    \"checklist\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"additionalProperties\": false,\n        \"required\": [\n          \"requisito\",\n          \"categoria\",\n          \"estado\",\n          \"detalle\"\n        ],\n        \"properties\": {\n          \"requisito\": {\n            \"type\": \"string\"\n          },\n          \"categoria\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"acceso\",\n              \"ambiente\",\n              \"datos\",\n              \"reglas\",\n              \"seguridad\",\n              \"operacion\"\n            ]\n          },\n          \"estado\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"pendiente\",\n              \"completo\",\n              \"no_aplica\"\n            ]\n          },\n          \"detalle\": {\n            \"type\": \"string\"\n          }\n        }\n      }\n    },\n    \"configuracion\": {\n      \"type\": \"object\",\n      \"additionalProperties\": false,\n      \"required\": [\n        \"origen\",\n        \"destino\",\n        \"navegador\",\n        \"entidades\",\n        \"clave_identidad\",\n        \"reglas\",\n        \"volumen_estimado\",\n        \"piloto\",\n        \"aprobadores\"\n      ],\n      \"properties\": {\n        \"origen\": {\n          \"type\": \"object\",\n          \"additionalProperties\": false,\n          \"required\": [\n            \"nombre\",\n            \"url\",\n            \"acceso\",\n            \"autenticacion\",\n            \"ambiente\",\n            \"rutas_relevantes\"\n          ],\n          \"properties\": {\n            \"nombre\": {\n              \"type\": \"string\"\n            },\n            \"url\": {\n              \"type\": \"string\"\n            },\n            \"acceso\": {\n              \"type\": \"string\",\n              \"enum\": [\n                \"ui\",\n                \"api\",\n                \"ui_y_api\",\n                \"desconocido\"\n              ]\n            },\n            \"autenticacion\": {\n              \"type\": \"string\"\n            },\n            \"ambiente\": {\n              \"type\": \"string\",\n              \"description\": \"producción, pruebas, etc.\"\n            },\n            \"rutas_relevantes\": {\n              \"type\": \"array\",\n              \"items\": {\n                \"type\": \"string\"\n              }\n            }\n          }\n        },\n        \"destino\": {\n          \"type\": \"object\",\n          \"additionalProperties\": false,\n          \"required\": [\n            \"nombre\",\n            \"url\",\n            \"acceso\",\n            \"autenticacion\",\n            \"ambiente\",\n            \"rutas_relevantes\"\n          ],\n          \"properties\": {\n            \"nombre\": {\n              \"type\": \"string\"\n            },\n            \"url\": {\n              \"type\": \"string\"\n            },\n            \"acceso\": {\n              \"type\": \"string\",\n              \"enum\": [\n                \"ui\",\n                \"api\",\n                \"ui_y_api\",\n                \"desconocido\"\n              ]\n            },\n            \"autenticacion\": {\n              \"type\": \"string\"\n            },\n            \"ambiente\": {\n              \"type\": \"string\",\n              \"description\": \"producción, pruebas, etc.\"\n            },\n            \"rutas_relevantes\": {\n              \"type\": \"array\",\n              \"items\": {\n                \"type\": \"string\"\n              }\n            }\n          }\n        },\n        \"navegador\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"chromium\",\n            \"firefox\",\n            \"webkit\",\n            \"chromium_remoto\",\n            \"sin_definir\"\n          ]\n        },\n        \"entidades\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"object\",\n            \"additionalProperties\": false,\n            \"required\": [\n              \"nombre\",\n              \"filtros\",\n              \"incluir\",\n              \"excluir\"\n            ],\n            \"properties\": {\n              \"nombre\": {\n                \"type\": \"string\"\n              },\n              \"filtros\": {\n                \"type\": \"string\"\n              },\n              \"incluir\": {\n                \"type\": \"array\",\n                \"items\": {\n                  \"type\": \"string\"\n                }\n              },\n              \"excluir\": {\n                \"type\": \"array\",\n                \"items\": {\n                  \"type\": \"string\"\n                }\n              }\n            }\n          }\n        },\n        \"clave_identidad\": {\n          \"type\": \"string\"\n        },\n        \"reglas\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"string\"\n          }\n        },\n        \"volumen_estimado\": {\n          \"type\": \"string\"\n        },\n        \"piloto\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"string\"\n          }\n        },\n        \"aprobadores\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"string\"\n          }\n        }\n      }\n    }\n  }\n}",
+        "autoFix": true
+      },
+      "name": "Formato · configurador",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        900,
+        520
+      ],
+      "id": "78709759-90a1-4206-8a95-b6ea7b26aa54"
+    },
+    {
+      "parameters": {
+        "jsCode": "  const datos = $input.first().json.output;\n  const { sessionId } = $('Preparar conversación').first().json;\n  if (!datos?.respuesta) return [{ json: { output: 'No pude interpretar la respuesta del modelo. Intenta de nuevo.', sessionId } }];\n  const almacen = $getWorkflowStaticData('global');\n  const sesion = almacen.sesiones[sessionId];\n  sesion.historial.push({ rol: 'asistente', texto: datos.respuesta });\n  sesion.configuracion = datos.configuracion;\n  sesion.checklist = datos.checklist;\n  sesion.fase = datos.fase;\n  const pendientes = datos.checklist.filter((c) => c.estado === 'pendiente');\n  let salida = datos.respuesta;\n  if (pendientes.length) salida += `\\n\\n**Pendiente (${pendientes.length}):**\\n${pendientes.map((p) => `- ${p.requisito}`).join('\\n')}`;\n  if (datos.fase === 'listo_para_explorar') {\n    const formulario = 'http://localhost:5678/form/9d4e7b21-5c3a-4f8e-b1a6-2c7f0e9d3b42';\n    salida += `\\n\\n✅ **La configuración está completa.** Copia este bloque y pégalo en el formulario «Iniciar migración» (${formulario}):\\n\\n\\`\\`\\`json\\n${JSON.stringify(datos.configuracion, null, 2)}\\n\\`\\`\\``;\n  }\n  return [{ json: { output: salida, sessionId, fase: datos.fase } }];\n"
+      },
+      "name": "Guardar y responder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        300
+      ],
+      "id": "2fd3d9c1-494f-4310-a44a-53b8306bb57b"
+    }
+  ],
+  "connections": {
+    "Chat de migración": {
+      "main": [
+        [
+          {
+            "node": "Preparar conversación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar conversación": {
+      "main": [
+        [
+          {
+            "node": "IA · configurador",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IA · configurador": {
+      "main": [
+        [
+          {
+            "node": "Guardar y responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modelo · configurador": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "IA · configurador",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Formato · configurador",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formato · configurador": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "IA · configurador",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

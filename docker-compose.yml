@@ -1,0 +1,72 @@
+services:
+  browserless:
+    image: ghcr.io/browserless/chromium:latest
+    container_name: browserless_service
+    restart: unless-stopped
+    networks:
+      - migracion-net
+    ports:
+      - "3000:3000"
+    environment:
+      - CONCURRENT=4         # Hasta 4 sesiones simultáneas en paralelo
+      - QUEUED=100           # Capacidad de cola en buffer
+      - TIMEOUT=120000       # 120 segundos límite por operación pesada
+      - KEEP_ALIVE=true
+      - PREBOOT_CHROME=true
+      - DEFAULT_BLOCK_ADS=true
+    deploy:
+      resources:
+        limits:
+          memory: 4096M
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n_orchestrator
+    restart: unless-stopped
+    networks:
+      - migracion-net
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - N8N_PORT=${N8N_PORT:-5678}
+      - N8N_PROTOCOL=${N8N_PROTOCOL:-http}
+      - NODE_ENV=production
+      - WEBHOOK_URL=${WEBHOOK_URL:-http://localhost:5678/}
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-America/Bogota}
+      - N8N_COMMUNITY_PACKAGES_ENABLED=true
+    volumes:
+      - ./n8n_data:/home/node/.n8n
+    depends_on:
+      - browserless
+      - ejecutor
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+
+  # Ejecutor de navegador con Playwright (Chromium, Firefox, WebKit) que usa la orquestación de n8n.
+  # No expone puertos hacia el exterior por seguridad; solo se comunica dentro de la red Docker.
+  ejecutor:
+    build: ./ejecutor
+    container_name: ejecutor_playwright
+    restart: unless-stopped
+    networks:
+      - migracion-net
+    environment:
+      - PUERTO=3100
+      - MAX_SIMULTANEOS=4
+      # Chromium remoto en browserless para ejecución headless estable
+      - BROWSERLESS_CDP=ws://browserless:3000?timeout=600000
+    extra_hosts:
+      # Permite conectar a aplicaciones que corren localmente en la máquina host
+      - "host.docker.internal:host-gateway"
+    ipc: host
+    deploy:
+      resources:
+        limits:
+          memory: 4096M
+
+networks:
+  migracion-net:
+    driver: bridge

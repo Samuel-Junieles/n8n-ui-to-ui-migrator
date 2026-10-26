@@ -1,0 +1,11 @@
+{
+  "name": "ejecutor-playwright",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node servidor.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.49.1"
+  }
+}

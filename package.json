@@ -1,0 +1,22 @@
+{
+  "name": "n8n-ui-to-ui-migrator",
+  "version": "1.0.0",
+  "description": "Sistema autónomo y asistido de migración UI a UI orquestado con n8n, Playwright y modelos de lenguaje (LLM).",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "flujos:generar": "node n8n/generar.mjs"
+  },
+  "keywords": [
+    "n8n",
+    "playwright",
+    "browserless",
+    "rpa",
+    "ui-to-ui",
+    "migration",
+    "llm",
+    "langchain"
+  ],
+  "author": "Samuel Junieles",
+  "license": "MIT"
+}
